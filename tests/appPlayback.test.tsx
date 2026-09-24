@@ -222,6 +222,49 @@ test("production App playback, bootstrap and supplement regressions", async (t) 
     const sublines = (type: string) => renderer!.root.findAll((node) => (
       typeof node.type === "string" && String(node.props.className || "").split(/\s+/).includes(type)
     )).map((node) => node.children.filter((child) => typeof child === "string").join(""));
+    await t.test("a hidden original cannot suppress an identical translation", async () => {
+      await mount({ showOriginal: false, showPhonetic: false, showTranslation: true });
+      await act(() => emit("lyrics-update", { lyricsData: { ...baseLyrics(), lyrics: [
+        { startTime: 0, text: "Hello", pronText: "Hello", transText: "Hello" },
+      ] } }));
+      assert.deepEqual(sublines("translation"), ["Hello"]);
+      await updateSettings({ showOriginal: true, showPhonetic: false, showTranslation: true });
+      assert.deepEqual(sublines("translation"), [], "visible original still avoids duplicate text");
+      await unmount();
+    });
+    await t.test("omitting the original element keeps vocal auxiliary text visible", async () => {
+      await mount({ elementOrder: ["trackInfo", "translation"], showOriginal: true, showTranslation: true });
+      const vocals = {
+        lead: { text: "Lead", syllables: [{ text: "Lead", startTime: 0, endTime: 1000 }] },
+        background: [{ text: "Back", syllables: [{ text: "Back", startTime: 0, endTime: 1000 }] }],
+      };
+      await act(() => emit("lyrics-update", { lyricsData: { ...baseLyrics(), lyrics: [
+        { startTime: 0, text: "Lead / Back", transText: "전체 번역", vocals },
+      ] } }));
+      assert.deepEqual(sublines("translation"), ["전체 번역"]);
+      await updateSettings({ elementOrder: ["trackInfo", "original", "translation"], showPhonetic: true, showTranslation: true });
+      await act(() => emit("lyrics-update", { lyricsData: { ...baseLyrics(), lyrics: [
+        { startTime: 0, text: "Lead / Back", pronText: "첫째 / 둘째", transText: "첫째 / 둘째", vocals },
+      ] } }));
+      assert.deepEqual(sublines("phonetic"), [], "omitted phonetics stay hidden inside vocal rows too");
+      assert.deepEqual(sublines("translation"), ["첫째", "둘째"]);
+      await unmount();
+    });
+    await t.test("a partial vocal translation cannot discard an unsplit line translation", async () => {
+      await mount({ showPhonetic: false, showTranslation: true });
+      const vocals = {
+        lead: { text: "Lead", translation: "앞부분 번역", syllables: [{ text: "Lead", startTime: 0, endTime: 1000 }] },
+        background: [{ text: "Back", syllables: [{ text: "Back", startTime: 0, endTime: 1000 }] }],
+      };
+      const line = { startTime: 0, text: "Lead / Back", transText: "한 문장으로 합쳐진 전체 번역", vocals };
+      await act(() => emit("lyrics-update", { lyricsData: { ...baseLyrics(), lyrics: [line] } }));
+      assert.deepEqual(sublines("translation"), ["앞부분 번역", "한 문장으로 합쳐진 전체 번역"]);
+      await act(() => emit("lyrics-update", { lyricsData: { ...baseLyrics(), lyrics: [{ ...line,
+        vocals: { ...vocals, background: [{ ...vocals.background[0], translation: "뒷부분 번역" }] },
+      }] } }));
+      assert.deepEqual(sublines("translation"), ["앞부분 번역", "뒷부분 번역"], "complete row translations replace the fallback");
+      await unmount();
+    });
     await t.test("late matching phonetics cannot hide translation when phonetics are not displayed", async () => {
       await mount({ showPhonetic: false, showTranslation: true });
       const data = { ...baseLyrics(), lyrics: [{ startTime: 0, text: "Hello", transText: "안녕" }] };

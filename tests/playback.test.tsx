@@ -30,7 +30,16 @@ test("392 direct/production-clock snapshots preserve original fill, bounce, wrap
     for (const isActive of [false, true]) for (const position of positions) {
       const html = renderToStaticMarkup(<KaraokeLyrics line={line} position={position} isActive={isActive} {...auxiliary} />);
       const hash = createHash("sha256").update(html).digest("hex");
-      assert.equal(hash, baseline[`${name}/${isActive}/${position}`], `${name}/${isActive}/${position}`);
+      let baselineHtml = html;
+      if (name === "triple") {
+        // This fixture has a translation for only one of three vocal rows.
+        // The fix restores exactly this full-line fallback; every other byte
+        // must still match the old animation/layout snapshots.
+        const restored = `<span class="karaoke-part-subline karaoke-stack-subline translation">${auxiliary.translation}</span>`;
+        assert.equal(html.split(restored).length, 2, "partial rows retain one full translation");
+        baselineHtml = html.replace(restored, "");
+      }
+      assert.equal(createHash("sha256").update(baselineHtml).digest("hex"), baseline[`${name}/${isActive}/${position}`], `${name}/${isActive}/${position}`);
       const clock = new PlaybackClock(new FakeFrames());
       clock.setPlayback(position, true);
       const clockHtml = renderToStaticMarkup(<KaraokeLyrics line={line} clock={clock} isActive={isActive} {...auxiliary} />);

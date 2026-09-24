@@ -693,7 +693,9 @@ const KaraokeLyrics = memo(function KaraokeLyrics({
             translation: row.translation || splitTranslations[index] || "",
         }));
         return { rows, hasRowPhonetic: rows.some((row) => row.phonetic),
-            hasRowTranslation: rows.some((row) => row.translation) };
+            // A partial provider result must not swallow the unsplit line
+            // translation for the other vocal rows.
+            hasCompleteRowTranslation: rows.every((row) => row.translation.trim()) };
     }, [vocalRows, phonetic, translation]);
     const singleShape = useMemo(() => {
         const directSyllables = Array.isArray(line.syllables) ? line.syllables : [];
@@ -707,7 +709,7 @@ const KaraokeLyrics = memo(function KaraokeLyrics({
         };
     }, [line]);
     if (vocalShape) {
-        const { rows, hasRowPhonetic, hasRowTranslation } = vocalShape;
+        const { rows, hasRowPhonetic, hasCompleteRowTranslation } = vocalShape;
         return (
             <span className="karaoke-stack">
                 {rows.map((row) => {
@@ -739,7 +741,7 @@ const KaraokeLyrics = memo(function KaraokeLyrics({
                 {showPhonetic && !hasRowPhonetic && phonetic && (
                     <span className="karaoke-part-subline karaoke-stack-subline phonetic">{phonetic}</span>
                 )}
-                {showTranslation && !hasRowTranslation && translation
+                {showTranslation && !hasCompleteRowTranslation && translation
                     && !(showPhonetic && !hasRowPhonetic && translation === phonetic) && (
                     <span className="karaoke-part-subline karaoke-stack-subline translation">{translation}</span>
                 )}

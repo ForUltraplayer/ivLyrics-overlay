@@ -937,16 +937,16 @@ function App() {
   }, []);
 
   // Get display text
-  const getDisplayText = (line: LyricLine) => {
+  const getDisplayText = (line: LyricLine, originalVisible: boolean) => {
     const hasPronText =
       line.pronText &&
       line.pronText.trim() !== "" &&
-      line.pronText !== line.text;
+      (!originalVisible || line.pronText !== line.text);
     // Compare with phonetics at the render site, where their visibility is known.
     const hasTransText =
       line.transText &&
       line.transText.trim() !== "" &&
-      line.transText !== line.text;
+      (!originalVisible || line.transText !== line.text);
     return {
       main: line.text || "",
       phonetic: hasPronText ? line.pronText : null,
@@ -1109,8 +1109,6 @@ function App() {
     }
     return hex;
   };
-
-  const display = activeLine ? getDisplayText(activeLine) : null;
 
   // Alignment classes
   const alignClass =
@@ -1413,7 +1411,12 @@ function App() {
             setIndex: number,
             totalSets: number
           ) => {
-            const displayData = getDisplayText(lineInfo.line);
+            const originalVisible = settings.showOriginal
+              && lyricsElements.includes("original")
+              && !!lineInfo.line.text;
+            const phoneticVisible = settings.showPhonetic && lyricsElements.includes("phonetic");
+            const translationVisible = settings.showTranslation && lyricsElements.includes("translation");
+            const displayData = getDisplayText(lineInfo.line, originalVisible);
             const duplicatesVisiblePhonetic = settings.showPhonetic
               && lyricsElements.includes("phonetic")
               && displayData.translation === displayData.phonetic;
@@ -1432,7 +1435,7 @@ function App() {
               || hasTimedSyllables(lineInfo.line.vocals?.lead?.syllables)
             );
             const hasMultiVocalRows = hasKaraokeTiming && hasKaraokeVocalRows(lineInfo.line);
-            const embedsVocalAuxiliary = hasMultiVocalRows && settings.showOriginal;
+            const embedsVocalAuxiliary = hasMultiVocalRows && originalVisible;
 
             const renderOriginal = () => {
               if (!hasKaraokeTiming) return displayData.main;
@@ -1442,8 +1445,8 @@ function App() {
                   line={lineInfo.line}
                   clock={playbackClock}
                   isActive={lineInfo.isActive}
-                  showPhonetic={settings.showPhonetic}
-                  showTranslation={settings.showTranslation}
+                  showPhonetic={phoneticVisible}
+                  showTranslation={translationVisible}
                   phonetic={displayData.phonetic}
                   translation={displayData.translation}
                 />
@@ -1545,7 +1548,7 @@ function App() {
       })()}
 
       {/* Waiting Indicator */}
-      {!display && !track && !settings.isLocked && (
+      {!activeLine && !track && !settings.isLocked && (
         <div className="waiting-indicator">
           <div className="waiting-dot"></div>
           <span>{t.waiting}</span>
