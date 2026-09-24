@@ -1,11 +1,14 @@
 #![cfg(all(test, target_os = "windows"))]
 
-use super::restore_windows_alpha_composition;
+use super::windows_transparency::{
+    install_transparency_recovery, restore_windows_alpha_composition,
+};
 use windows::core::w;
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Dwm::DwmIsCompositionEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    CreateWindowExW, DestroyWindow, SendMessageW, WM_DISPLAYCHANGE, WM_DWMCOMPOSITIONCHANGED,
+    WM_ERASEBKGND, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 struct TestWindow(HWND);
@@ -56,7 +59,18 @@ fn reapplies_alpha_composition_on_a_live_top_level_window() {
     // invoke the production helper more than once. Exercise that lifecycle
     // without claiming that a unit test proves rendered pixel alpha.
     for _ in 0..8 {
+        install_transparency_recovery(window.0).expect("subclass installation must be repeatable");
         restore_windows_alpha_composition(window.0)
             .expect("DwmEnableBlurBehindWindow should accept the live HWND");
+        unsafe {
+            // No HDC is supplied: the transparent host must consume erasure
+            // before any native background brush tries to paint it.
+            assert_eq!(
+                SendMessageW(window.0, WM_ERASEBKGND, WPARAM(0), LPARAM(0)).0,
+                1
+            );
+            SendMessageW(window.0, WM_DWMCOMPOSITIONCHANGED, WPARAM(0), LPARAM(0));
+            SendMessageW(window.0, WM_DISPLAYCHANGE, WPARAM(32), LPARAM(0));
+        }
     }
 }

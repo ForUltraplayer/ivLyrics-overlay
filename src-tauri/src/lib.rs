@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 mod polling;
+#[cfg(target_os = "windows")]
+mod windows_transparency;
 #[cfg(all(test, target_os = "windows"))]
 mod windows_transparency_test;
 use polling::{poll_interval, IdleTimer};
@@ -730,7 +732,7 @@ fn refresh_windows_overlay_transparency<R: Runtime, M: Manager<R>>(manager: &M) 
             // it. Reapply the same empty blur region before repainting.
             match overlay.hwnd() {
                 Ok(hwnd) => {
-                    if let Err(error) = restore_windows_alpha_composition(HWND(hwnd.0 as *mut _)) {
+                    if let Err(error) = windows_transparency::install_transparency_recovery(HWND(hwnd.0 as *mut _)) {
                         eprintln!("Failed to restore Windows overlay composition: {error}");
                     }
                 }
@@ -748,33 +750,6 @@ fn refresh_windows_overlay_transparency<R: Runtime, M: Manager<R>>(manager: &M) 
 
     #[cfg(not(target_os = "windows"))]
     let _ = manager;
-}
-
-#[cfg(target_os = "windows")]
-fn restore_windows_alpha_composition(hwnd: HWND) -> Result<(), String> {
-    use windows::Win32::Graphics::Dwm::{
-        DwmEnableBlurBehindWindow, DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND,
-    };
-    use windows::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject};
-
-    // Match Tao's transparent-window setup. The region belongs to us and must
-    // be released even when DWM rejects the request. No blur or global opacity
-    // is added: WebView2 and the page keep control of each pixel's alpha.
-    unsafe {
-        let region = CreateRectRgn(0, 0, -1, -1);
-        if region.0.is_null() {
-            return Err("Failed to allocate the transparent window region".into());
-        }
-        let blur = DWM_BLURBEHIND {
-            dwFlags: DWM_BB_ENABLE | DWM_BB_BLURREGION,
-            fEnable: true.into(),
-            hRgnBlur: region,
-            fTransitionOnMaximized: false.into(),
-        };
-        let result = DwmEnableBlurBehindWindow(hwnd, &blur);
-        let _ = DeleteObject(region);
-        result.map_err(|error| error.to_string())
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
