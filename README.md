@@ -1,3 +1,7 @@
+<img width="2208" height="512" alt="ko" src="https://github.com/ivLis-Studio/ivLyrics/blob/main/preview_readme_ko.png?raw=true" /><br>
+PLATFORM : <a href="https://github.com/ivLis-Studio/ivLyrics">PC</a> | <a href="https://github.com/ivLis-Studio/ivLyrics-Android">Android</a> | <a href="https://github.com/ivLis-Studio/ivLyrics-IOS">IOS</a><br>
+MODULE : <a href="https://github.com/ivLis-Studio/ivLyrics-overlay">Overlay</a> | <a href="https://github.com/ivLis-Studio/ivLyrics-helper">Helper</a>
+
 의존성 프로그램입니다.
 메인 프로젝트는 https://github.com/ivLis-Studio/lyrics-plus 를 참고하세요
 
