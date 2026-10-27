@@ -114,6 +114,39 @@ body {
 /* ============================================
    Overlay Container
    ============================================ */
+.overlay-shell {
+  height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.overlay-shell > .overlay-container {
+  height: auto;
+  min-height: 0;
+  flex: 0 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.overlay-shell .lyrics-box,
+.overlay-shell .lyrics-set,
+.overlay-shell .track-info-line {
+  flex-shrink: 0;
+  max-width: 100%;
+}
+.overlay-shell .lyric-line {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.desktop-controls-slot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(var(--playback-button-size, 32px) + 14px + var(--playback-controls-gap, 12px) + 8px);
+  padding: var(--playback-controls-gap, 12px) 0 8px;
+}
 .overlay-container {
   width: 100%;
   height: 100vh;

@@ -5,6 +5,9 @@ description = "Lyrics Plus Overlay - Display lyrics from Spotify"
 authors = ["ivLis"]
 edition = "2021"
 
+[features]
+overlay-diagnostics = []
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]

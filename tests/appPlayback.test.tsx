@@ -47,6 +47,7 @@ test("production App playback, bootstrap and supplement regressions", async (t) 
     const listeners = new Map<string, Set<(event: { payload: unknown }) => void>>();
     const calls: string[] = [];
     const timers = new Map<number, () => void>();
+    const intervals = new Map<number, () => void>();
     const browserListeners = new Map<string, Set<(event: unknown) => void>>();
     const bootstraps: Promise<unknown>[] = [];
     let timerId = 0;
@@ -65,6 +66,9 @@ test("production App playback, bootstrap and supplement regressions", async (t) 
         browserListeners.get(name)?.delete(callback);
       },
       setTimeout(callback: () => void) { timers.set(++timerId, callback); return timerId; },
+      clearTimeout(id: number) { timers.delete(id); },
+      setInterval(callback: () => void) { intervals.set(++timerId, callback); return timerId; },
+      clearInterval(id: number) { intervals.delete(id); },
     };
     const native = {
       listen(name: string, callback: (event: { payload: unknown }) => void) {
@@ -169,6 +173,71 @@ test("production App playback, bootstrap and supplement regressions", async (t) 
         { startTime: 0, text: "Before", transText: translated ? "이전 번역" : null },
         { startTime: 1000, text: "Current", transText: translated ? "현재 번역" : null },
       ],
+    });
+    await t.test("unlocked controls remain visible during pause and data timeout without changing hide preferences", async () => {
+      await mount({ hideWhenPaused: true, isLocked: true });
+      await act(() => {
+        emit("lyrics-update", { lyricsData: baseLyrics() });
+        progress(1500, false);
+      });
+      const opacity = () => renderer!.root.findAll(node => typeof node.props.className === "string"
+        && node.props.className.split(" ").includes("overlay-container"))[0].props.style.opacity;
+      assert.equal(opacity(), 0, "locked paused lyrics obey the preference");
+      const controls = () => renderer!.root.findAllByProps({ 'data-testid': 'desktop-playback-controls' });
+      assert.equal(controls().length, 1, "old saved settings default to visible controls even while locked and paused");
+      for (let ancestor = controls()[0].parent; ancestor; ancestor = ancestor.parent) {
+        assert.ok(!String(ancestor.props.className).split(' ').includes('overlay-container'), "controls are independent of the fading lyric container");
+      }
+      await updateSettings({ hideWhenPaused: true, isLocked: true, playbackControlsVisibility: 'hover', playbackControlsSize: 48 });
+      assert.equal(controls().length, 0);
+      assert.equal(renderer!.root.findAllByProps({ className: 'desktop-controls-slot' }).length, 1, 'hover mode keeps its layout reservation while the buttons are hidden');
+      await act(() => emit("overlay-hover", true));
+      assert.equal(controls().length, 1);
+      assert.equal(controls()[0].props.style['--playback-button-size'], '48px');
+      await updateSettings({ hideWhenPaused: true, isLocked: true, playbackControlsVisibility: 'hidden' });
+      assert.equal(controls().length, 0);
+      assert.equal(renderer!.root.findAllByProps({ className: 'desktop-controls-slot' }).length, 0, 'explicit hidden mode returns the reserved area to lyrics');
+      await updateSettings({ hideWhenPaused: true, isLocked: true, playbackControlsVisibility: 'always' });
+      await act(() => emit("overlay-hover", false));
+      await act(() => emit("lock-state-update", false));
+      assert.equal(opacity(), 1, "unlocking exposes the resume controls");
+      await act(() => {
+        for (const callback of [...timers.values()]) callback();
+      });
+      assert.equal(opacity(), 1, "data timeout cannot hide active unlocked controls");
+      await act(() => emit("lock-state-update", true));
+      assert.equal(opacity(), 0, "locking restores pause/timeout hiding");
+      await unmount();
+      await mount({ hideWhenPaused: false, isLocked: true });
+      await act(() => { emit("lyrics-update", { lyricsData: baseLyrics() }); progress(1500, true); });
+      assert.equal(opacity(), 1);
+      await act(() => { for (const callback of [...timers.values()]) callback(); });
+      assert.equal(opacity(), 0, "locked data timeout remains effective independently of pause hiding");
+      await act(() => emit("lock-state-update", false));
+      assert.equal(opacity(), 1);
+      await unmount();
+      assert.equal(intervals.size, 0);
+    });
+    await t.test("controls honor hover and background appearance while paused without resetting visibility or size", async () => {
+      const userControls = { hideWhenPaused: true, isLocked: true, playbackControlsVisibility: 'hover', playbackControlsSize: 24 };
+      await mount({ ...userControls, backgroundMode: 'transparent' });
+      await act(() => { emit('lyrics-update', { lyricsData: baseLyrics() }); progress(1500, false); emit('overlay-hover', true); });
+      const controls = () => renderer!.root.findByProps({ 'data-testid': 'desktop-playback-controls' });
+      assert.equal(controls().props.style.background, 'transparent');
+      for (const [hoverAppearance, expectedOpacity] of [['transparent', 0], ['translucent', 0.2], ['unchanged', 1]] as const) {
+        await updateSettings({ ...userControls, hoverAppearance, backgroundMode: 'solid', solidBackgroundColor: '#123456',
+          solidBackgroundOpacity: 40, textColor: '#abcdef', customCSS: '.desktop-playback-controls { border-radius: 0; }' });
+        const style = controls().props.style;
+        assert.equal(style.opacity, expectedOpacity);
+        assert.equal(style.pointerEvents, expectedOpacity === 0 ? 'none' : 'auto');
+        assert.equal(style.background, 'rgba(18, 52, 86, 0.4)');
+        assert.equal(style.color, '#abcdef');
+        assert.equal(style['--playback-button-size'], '24px');
+        assert.ok(renderer!.root.findAllByType('style').some(node => node.children.join('').includes('.desktop-playback-controls { border-radius: 0; }')));
+      }
+      await act(() => emit('overlay-hover', false));
+      assert.equal(renderer!.root.findAllByProps({ 'data-testid': 'desktop-playback-controls' }).length, 0, 'the saved hover policy remains effective');
+      await unmount();
     });
     for (const live of ["lyrics", "progress", "both"] as const) {
       await t.test(`late bootstrap preserves live ${live} and hydrates the other stream`, async () => {

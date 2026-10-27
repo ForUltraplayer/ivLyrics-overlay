@@ -8,6 +8,9 @@ pub fn poll_interval(locked: bool, hovering: bool) -> Duration {
 pub struct IdleTimer(Duration);
 
 impl IdleTimer {
+    pub fn observe_auto_lock(&mut self, stationary: bool, hovering: bool, elapsed: Duration) {
+        self.observe(stationary && !hovering, elapsed);
+    }
     pub fn observe(&mut self, stationary: bool, elapsed: Duration) {
         // A suspended process cannot observe whether the pointer/window moved.
         // Require a fresh hold after a long gap instead of instantly unlocking.
@@ -75,5 +78,25 @@ mod tests {
         assert_eq!(timer.progress(1.2, 3.0), 0.0);
         timer.observe(true, Duration::from_millis(100));
         assert_eq!(timer.seconds(), 0.1);
+    }
+    #[test]
+    fn auto_lock_waits_for_a_full_idle_delay_after_the_pointer_leaves() {
+        let mut timer = IdleTimer::default();
+        for _ in 0..20 {
+            timer.observe_auto_lock(true, false, Duration::from_millis(100));
+        }
+        assert_eq!(timer.seconds(), 2.0);
+        for _ in 0..50 {
+            timer.observe_auto_lock(true, true, Duration::from_millis(100));
+            assert_eq!(timer.seconds(), 0.0, "hovering or clicking must keep controls unlocked");
+        }
+        for _ in 0..29 {
+            timer.observe_auto_lock(true, false, Duration::from_millis(100));
+        }
+        assert!(timer.seconds() < 3.0);
+        timer.observe_auto_lock(true, false, Duration::from_millis(100));
+        assert_eq!(timer.seconds(), 3.0);
+        timer.observe_auto_lock(false, false, Duration::from_millis(100));
+        assert_eq!(timer.seconds(), 0.0, "dragging the window must reset the delay");
     }
 }

@@ -29,6 +29,9 @@ import SettingsPanel from "./SettingsPanel";
 import SetupWizard from "./SetupWizard";
 import KaraokeLyrics, { hasKaraokeVocalRows } from "./KaraokeLyrics";
 import { PlaybackClock, createLineLookup, useActiveLineIndex } from "./playbackClock";
+import DesktopPlaybackControls from "./DesktopPlaybackControls";
+import { useLayoutEffect } from "react";
+import { revealCurrentLyric } from "./lyricViewport";
 
 // Default settings
 const defaultSettings = {
@@ -115,6 +118,9 @@ const defaultSettings = {
 
   // Visibility Options
   hideWhenPaused: false,
+  playbackControlsVisibility: "always" as "always" | "hover" | "hidden",
+  playbackControlsSize: 32,
+  playbackControlsGap: 12,
   hoverAppearance: "translucent" as "transparent" | "translucent" | "unchanged",
   showNextTrack: true,
   nextTrackSeconds: 15,
@@ -534,6 +540,18 @@ function App() {
     return lyrics[activeLineIndex];
   }, [lyrics, activeLineIndex]);
 
+  useLayoutEffect(() => {
+    const viewport = containerRef.current;
+    if (!viewport || isSettingsWindow) return;
+    const reveal = () => revealCurrentLyric(viewport);
+    reveal();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(reveal) : null;
+    observer?.observe(viewport);
+    const current = viewport.querySelector<HTMLElement>('[data-current-lyric="true"]');
+    if (current) observer?.observe(current);
+    return () => observer?.disconnect();
+  }, [activeLineIndex, lyrics, settings, isSettingsWindow]);
+
   // Hover state for opacity control
   const [isHovering, setIsHovering] = useState(false);
 
@@ -543,8 +561,8 @@ function App() {
   const DATA_TIMEOUT_MS = 5000; // 5 seconds
 
   // Calculate visibility
-  // Hide when: paused (if setting enabled), OR no data received for 5+ seconds
-  const shouldHide = (settings.hideWhenPaused && !isPlaying && track !== null) || isDataTimedOut;
+  // Keep unlocked controls visible so a paused or disconnected player can be resumed.
+  const shouldHide = settings.isLocked && ((settings.hideWhenPaused && !isPlaying && track !== null) || isDataTimedOut);
   const hoverOpacity = settings.hoverAppearance === "transparent"
     ? 0
     : settings.hoverAppearance === "unchanged"
@@ -1126,7 +1144,7 @@ function App() {
     remaining > 0;
 
   return (
-    <div
+    <div className="overlay-shell"><div
       ref={containerRef}
       className={`overlay-container ${!isPlaying ? "paused" : ""
         } ${alignClass} ${settings.isLocked ? "locked" : "unlocked"}`}
@@ -1500,6 +1518,7 @@ function App() {
               <div
                 key={`set-${lineInfo.index}`}
                 className="lyrics-set"
+                data-current-lyric={lineInfo.isActive ? "true" : undefined}
                 style={{
                   marginBottom: isLastSet ? 0 : `${settings.lyricsSetGap}px`,
                   display: 'flex',
@@ -1611,6 +1630,19 @@ function App() {
         </div>
       )}
     </div>
+    {settings.playbackControlsVisibility !== 'hidden' && <div className="desktop-controls-slot"
+      style={{ '--playback-button-size': `${settings.playbackControlsSize}px`,
+        '--playback-controls-gap': `${Math.min(48, Math.max(0, Number(settings.playbackControlsGap) || 0))}px` } as React.CSSProperties}>
+    <DesktopPlaybackControls enabled={true}
+      visible={settings.playbackControlsVisibility !== 'hover' || isHovering}
+      opacity={isHovering && settings.isLocked ? hoverOpacity : 1}
+      background={settings.backgroundMode === 'solid'
+        ? hexToRgba(settings.solidBackgroundColor, settings.solidBackgroundOpacity / 100) : 'transparent'}
+      color={settings.textColor}
+      cssRevision={settings.customCSS}
+      size={settings.playbackControlsSize} isPlaying={isPlaying}
+      trackUri={progressTrackUriRef.current || displayedLyricsTrackUriRef.current}
+      language={settings.language} /></div>}</div>
   );
 }
 

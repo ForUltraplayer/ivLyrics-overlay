@@ -104,6 +104,9 @@ const strings = {
         lineBgOpacity: "배경 투명도",
 
         // Layout Tab
+        playbackPositionSection: "재생 버튼",
+        controlsGap: "세로 위치",
+        controlsGapDesc: "값을 늘리면 버튼이 가사 아래로 내려갑니다. 슬라이더 위의 마우스 휠로도 조절할 수 있습니다.",
         alignmentSection: "정렬",
         textAlign: "텍스트 정렬",
         alignLeft: "왼쪽",
@@ -148,6 +151,12 @@ const strings = {
 
         // Behavior Tab
         visibilitySection: "표시 조건",
+        playbackControls: "재생 컨트롤 표시",
+        playbackControlsDesc: "잠금 상태에서도 버튼으로 재생 조작 가능",
+        controlsAlways: "항상 표시",
+        controlsHover: "마우스를 올릴 때",
+        controlsHidden: "숨김",
+        controlsSize: "재생 버튼 크기",
         hideWhenPaused: "일시정지 시 숨기기",
         hideWhenPausedDesc: "음악이 멈추면 오버레이 숨김",
         hoverAppearance: "마우스 오버 시 표시",
@@ -342,6 +351,9 @@ const strings = {
         lineBgOpacity: "Background Opacity",
 
         // Layout Tab
+        playbackPositionSection: "Playback Controls",
+        controlsGap: "Vertical Position",
+        controlsGapDesc: "Increase to move the controls farther below the lyrics. You can also use the mouse wheel over this slider.",
         alignmentSection: "Alignment",
         textAlign: "Text Alignment",
         alignLeft: "Left",
@@ -386,6 +398,12 @@ const strings = {
 
         // Behavior Tab
         visibilitySection: "Visibility",
+        playbackControls: "Playback controls",
+        playbackControlsDesc: "Buttons remain clickable while the overlay is locked",
+        controlsAlways: "Always",
+        controlsHover: "On hover",
+        controlsHidden: "Hidden",
+        controlsSize: "Playback button size",
         hideWhenPaused: "Hide When Paused",
         hideWhenPausedDesc: "Hide overlay when music is paused",
         hoverAppearance: "Appearance on Hover",
@@ -520,6 +538,7 @@ function Slider({
     step = 1,
     suffix = "",
     showValue = true,
+    wheelAdjust = false,
 }: {
     value: number;
     onChange: (v: number) => void;
@@ -528,13 +547,34 @@ function Slider({
     step?: number;
     suffix?: string;
     showValue?: boolean;
+    wheelAdjust?: boolean;
 }) {
     const [isDragging, setIsDragging] = useState(false);
+    const inputRef = useRef<HTMLInputElement>(null);
+    const current = useRef({ value, onChange });
+    current.current = { value, onChange };
+    useEffect(() => {
+        const input = inputRef.current;
+        if (!wheelAdjust || !input) return;
+        const onWheel = (event: WheelEvent) => {
+            if (!event.deltaY || event.ctrlKey || !Number.isFinite(event.deltaY)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const next = Math.min(max, Math.max(min, current.current.value + (event.deltaY > 0 ? step : -step)));
+            if (next !== current.current.value) {
+                current.current.value = next;
+                current.current.onChange(next);
+            }
+        };
+        input.addEventListener('wheel', onWheel, { passive: false });
+        return () => input.removeEventListener('wheel', onWheel);
+    }, [wheelAdjust, min, max, step]);
     const percentage = ((value - min) / (max - min)) * 100;
 
     return (
         <div className={`settings-slider ${isDragging ? "dragging" : ""}`}>
             <input
+                ref={inputRef}
                 type="range"
                 min={min}
                 max={max}
@@ -1370,6 +1410,11 @@ export default function SettingsPanel({
                     {/* ========== LAYOUT TAB ========== */}
                     {activeTab === "layout" && (
                         <>
+                            <SettingSection title={t.playbackPositionSection} delay={0}>
+                                <SettingItem label={t.controlsGap} description={t.controlsGapDesc} column>
+                                    <Slider value={settings.playbackControlsGap} onChange={(v) => update("playbackControlsGap", v)} min={0} max={48} step={2} suffix="px" wheelAdjust />
+                                </SettingItem>
+                            </SettingSection>
                             <SettingSection title={t.alignmentSection} delay={0}>
                                 <SettingItem label={t.textAlign}>
                                     <AlignButtons value={settings.textAlign} onChange={(v) => update("textAlign", v)} />
@@ -1529,6 +1574,21 @@ export default function SettingsPanel({
                     {activeTab === "behavior" && (
                         <>
                             <SettingSection title={t.visibilitySection} delay={0}>
+                                <SettingItem label={t.playbackControls} description={t.playbackControlsDesc} column>
+                                    <SegmentedControl options={[
+                                        { value: "always", label: t.controlsAlways },
+                                        { value: "hover", label: t.controlsHover },
+                                        { value: "hidden", label: t.controlsHidden },
+                                    ]} value={settings.playbackControlsVisibility}
+                                        onChange={(v) => update("playbackControlsVisibility", v)} />
+                                </SettingItem>
+                                {settings.playbackControlsVisibility !== "hidden" && (
+                                    <SettingItem label={t.controlsSize} column>
+                                        <Slider value={settings.playbackControlsSize}
+                                            onChange={(v) => update("playbackControlsSize", v)}
+                                            min={24} max={48} step={2} suffix="px" />
+                                    </SettingItem>
+                                )}
                                 <SettingItem label={t.hideWhenPaused} description={t.hideWhenPausedDesc}>
                                     <Toggle checked={settings.hideWhenPaused} onChange={(v) => update("hideWhenPaused", v)} />
                                 </SettingItem>

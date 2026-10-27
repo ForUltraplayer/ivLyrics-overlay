@@ -1,8 +1,11 @@
-use axum::{http::Method, routing::post, Json, Router};
+use axum::{http::{HeaderMap, Method, StatusCode}, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 mod polling;
+mod desktop_control;
+mod window_position;
+use desktop_control::{PlaybackControlBounds, PlaybackControlConfig};
 #[cfg(target_os = "windows")]
 mod windows_transparency;
 #[cfg(all(test, target_os = "windows"))]
@@ -154,6 +157,7 @@ pub struct ProgressEvent {
 struct LatestPayloads {
     lyrics_data: Option<LyricsData>,
     progress_data: Option<ProgressData>,
+    playback_config: Option<PlaybackControlConfig>,
 }
 
 // Shared state for HTTP server
@@ -172,6 +176,11 @@ struct AppLockState {
     is_locked: bool,
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     is_interactive: bool, // Track current interactive state to avoid spamming calls
+    playback_bounds: Option<(PlaybackControlBounds, Instant)>,
+    #[cfg(feature = "overlay-diagnostics")]
+    last_poll: Option<Instant>,
+    #[cfg(feature = "overlay-diagnostics")]
+    last_unlock: Option<(&'static str, u64)>,
     unlock_wait_time: f32,     // Wait time in seconds before progress starts
     unlock_hold_time: f32,     // Hold time in seconds to complete unlock
     enable_hover_unlock: bool, // Enable/disable hover unlock feature
@@ -326,6 +335,36 @@ async fn handle_progress<R: Runtime>(
     "OK"
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis().min(u64::MAX as u128) as u64).unwrap_or(0)
+}
+
+// Pairing remains in memory and is accepted only from the Spotify renderer.
+async fn handle_playback_config<R: Runtime>(
+    axum::extract::State(state): axum::extract::State<Arc<AppState<R>>>,
+    headers: HeaderMap,
+    Json(config): Json<PlaybackControlConfig>,
+) -> StatusCode {
+    if headers.get("origin").and_then(|value| value.to_str().ok()) != Some("https://xpui.app.spotify.com") {
+        return StatusCode::FORBIDDEN;
+    }
+    if !config.valid_at(now_ms()) { return StatusCode::BAD_REQUEST; }
+    if let Ok(mut latest) = state.latest_payloads.lock() {
+        latest.playback_config = Some(config.clone());
+    } else { return StatusCode::SERVICE_UNAVAILABLE; }
+    let _ = state.app_handle.emit("playback-config", config);
+    StatusCode::OK
+}
+
+#[tauri::command]
+async fn get_playback_control_config(
+    state: tauri::State<'_, Arc<Mutex<LatestPayloads>>>,
+) -> Result<Option<PlaybackControlConfig>, String> {
+    let latest = state.lock().map_err(|_| "Playback state is unavailable".to_string())?;
+    Ok(latest.playback_config.clone().filter(|config| config.valid_at(now_ms())))
+}
+
 // Start HTTP server with custom port
 async fn start_http_server<R: Runtime>(
     app_handle: AppHandle<R>,
@@ -345,6 +384,7 @@ async fn start_http_server<R: Runtime>(
     let app = Router::new()
         .route("/lyrics", post(handle_lyrics::<R>))
         .route("/progress", post(handle_progress::<R>))
+        .route("/playback-config", post(handle_playback_config::<R>))
         .layer(cors)
         .with_state(state);
 
@@ -422,14 +462,92 @@ async fn start_drag(window: tauri::Window) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
 }
 
+fn move_existing_overlay(app: &AppHandle, action: &str) -> Result<(), String> {
+    let overlay = app.get_webview_window("main").ok_or("The lyric window is unavailable")?;
+    let monitor = overlay.current_monitor().map_err(|e| e.to_string())?
+        .or(overlay.primary_monitor().map_err(|e| e.to_string())?)
+        .ok_or("No monitor is available")?;
+    let work = monitor.work_area();
+    let position = overlay.outer_position().map_err(|e| e.to_string())?;
+    let size = overlay.outer_size().map_err(|e| e.to_string())?;
+    let scale = monitor.scale_factor();
+    let height = if action == "grow" { window_position::larger_height(size.height, work.size.height, scale)? } else { size.height };
+    let (x, y) = window_position::next_position((position.x, position.y), (size.width, height),
+        window_position::WorkArea { x: work.position.x, y: work.position.y, width: work.size.width, height: work.size.height }, scale,
+        if action == "grow" { "stay" } else { action })?;
+    if height != size.height {
+        overlay.set_size(tauri::PhysicalSize::new(size.width, height)).map_err(|e| e.to_string())?;
+    }
+    // A settings-button nudge must not activate or focus the lyric window.
+    overlay.set_position(PhysicalPosition::new(x, y)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn move_overlay_window(window: tauri::Window, app: AppHandle, action: String) -> Result<(), String> {
+    if !matches!(window.label(), "main" | "settings") { return Err("Only overlay settings can move the lyric window".into()); }
+    move_existing_overlay(&app, &action)
+}
+
 // Tauri command to set ignore cursor events
 #[tauri::command]
-async fn set_ignore_cursor_events(window: tauri::Window, ignore: bool) -> Result<(), String> {
+async fn set_ignore_cursor_events(window: tauri::Window, state: tauri::State<'_, Arc<Mutex<AppLockState>>>, ignore: bool) -> Result<(), String> {
     window
         .set_ignore_cursor_events(ignore)
         .map_err(|e| e.to_string())?;
     refresh_windows_overlay_transparency(&window);
+    if window.label() == "main" {
+        state.lock().map_err(|e| e.to_string())?.is_interactive = !ignore;
+    }
     Ok(())
+}
+
+#[tauri::command]
+async fn set_playback_control_bounds(window: tauri::Window, state: tauri::State<'_, Arc<Mutex<AppLockState>>>,
+    bounds: Option<PlaybackControlBounds>) -> Result<(), String> {
+    if window.label() != "main" { return Err("Only the lyric window can publish control bounds".into()); }
+    if bounds.as_ref().is_some_and(|value| !value.valid()) { return Err("Invalid control bounds".into()); }
+    let mut state = state.lock().map_err(|e| e.to_string())?;
+    state.playback_bounds = bounds.map(|value| (value, Instant::now()));
+    if state.is_locked && state.playback_bounds.is_none() && state.is_interactive {
+        window.set_ignore_cursor_events(true).map_err(|e| e.to_string())?;
+        refresh_windows_overlay_transparency(&window);
+        state.is_interactive = false;
+    }
+    Ok(())
+}
+
+fn controls_under_pointer(state: &AppLockState, x: i32, y: i32, scale: f64) -> bool {
+    state.playback_bounds.as_ref().is_some_and(|(bounds, updated)|
+        updated.elapsed() <= Duration::from_secs(3) && bounds.contains_physical(x as f64, y as f64, scale))
+}
+
+#[cfg(feature = "overlay-diagnostics")]
+#[tauri::command]
+async fn get_overlay_interaction_state(window: tauri::Window, state: tauri::State<'_, Arc<Mutex<AppLockState>>>)
+    -> Result<serde_json::Value, String> {
+    if window.label() != "main" { return Err("Diagnostic is only available in the lyric window".into()); }
+    let position = window.outer_position().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let mut native = serde_json::json!(null);
+    let mut pointer = None;
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GWL_EXSTYLE};
+        let mut point = POINT::default();
+        if unsafe { GetCursorPos(&mut point) }.is_ok() { pointer = Some((point.x, point.y)); }
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        let style = unsafe { GetWindowLongPtrW(HWND(hwnd.0 as *mut _), GWL_EXSTYLE) };
+        native = serde_json::json!({"extendedStyle":style,"transparent":style & 0x20 != 0});
+    }
+    let state = state.lock().map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"locked":state.is_locked,"interactive":state.is_interactive,
+        "bounds":state.playback_bounds.as_ref().map(|(b, updated)| serde_json::json!({"left":b.left,"top":b.top,
+            "width":b.width,"height":b.height,"ageMs":updated.elapsed().as_millis()})),
+        "pollAgeMs":state.last_poll.map(|time|time.elapsed().as_millis()),
+        "lastUnlockReason":state.last_unlock.map(|(reason,_)|reason),
+        "lastUnlockAt":state.last_unlock.map(|(_,time)|time),
+        "outerPosition":{"x":position.x,"y":position.y},"scale":scale,"cursor":pointer,
+        "expectedControlHit":pointer.map(|(x,y)| controls_under_pointer(&state,x-position.x,y-position.y,scale)),"native":native}))
 }
 
 // Tauri command to update lock state from frontend
@@ -440,6 +558,8 @@ async fn set_lock_state(
     locked: bool,
 ) -> Result<(), String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
+    #[cfg(feature = "overlay-diagnostics")]
+    if s.is_locked && !locked { s.last_unlock = Some(("frontend", now_ms())); }
     s.is_locked = locked;
     Ok(())
 }
@@ -678,6 +798,48 @@ fn macos_refresh_window_level<R: Runtime + 'static>(
     })
 }
 
+static SETTINGS_WINDOW_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+struct SettingsWindowRequest;
+
+impl Drop for SettingsWindowRequest {
+    fn drop(&mut self) {
+        SETTINGS_WINDOW_PENDING.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+fn request_settings_window<R: Runtime + 'static>(app: &AppHandle<R>) {
+    if SETTINGS_WINDOW_PENDING.compare_exchange(false, true,
+        std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire).is_err() {
+        return;
+    }
+    let handle = app.clone();
+    let request = SettingsWindowRequest;
+    // WebViewWindowBuilder must not block a Windows event handler or WM_COPYDATA:
+    // WebView2 needs that thread's message pump to complete window creation.
+    #[cfg(target_os = "windows")]
+    if let Err(error) = std::thread::Builder::new().name("overlay-settings".into()).spawn(move || {
+        let _request = request;
+        if let Err(error) = show_or_create_settings_window(&handle) {
+            eprintln!("Failed to open overlay settings: {error}");
+        }
+    }) {
+        eprintln!("Failed to dispatch overlay settings: {error}");
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let manager = handle.clone();
+        if let Err(error) = handle.run_on_main_thread(move || {
+            let _request = request;
+            if let Err(error) = show_or_create_settings_window(&manager) {
+                eprintln!("Failed to open overlay settings: {error}");
+            }
+        }) {
+            eprintln!("Failed to dispatch overlay settings: {error}");
+        }
+    }
+}
+
 fn show_or_create_settings_window<R: Runtime, M: Manager<R>>(manager: &M) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -776,6 +938,11 @@ pub fn run() {
     let lock_state = Arc::new(Mutex::new(AppLockState {
         is_locked: true, // Default to locked (pass-through)
         is_interactive: false,
+        playback_bounds: None,
+        #[cfg(feature = "overlay-diagnostics")]
+        last_poll: None,
+        #[cfg(feature = "overlay-diagnostics")]
+        last_unlock: None,
         unlock_wait_time: 1.2,            // Default: 1.2 seconds
         unlock_hold_time: 3.0,            // Default: 3 seconds
         enable_hover_unlock: true,        // Default: enabled
@@ -807,7 +974,7 @@ pub fn run() {
         // Autostart may already have launched the overlay before the user opens it manually.
         // Keep one native overlay window and route subsequent launches to its settings window.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            let _ = show_or_create_settings_window(app);
+            request_settings_window(app);
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build()) // Updater Init
@@ -850,20 +1017,22 @@ pub fn run() {
                     match event.id.as_ref() {
                         "quit" => app.exit(0),
                         "reset_pos" => {
+                             let _ = move_existing_overlay(app, "reset");
                              if let Some(window) = app.get_webview_window("main") {
-                                 let _ = window.set_position(PhysicalPosition::new(100, 100));
                                  let _ = window.show();
                                  let _ = window.set_focus();
                              }
                         },
                         "settings" => {
-                            let _ = show_or_create_settings_window(app);
+                            request_settings_window(app);
                         },
                         "toggle_lock" => {
                              let state = app.state::<std::sync::Arc<std::sync::Mutex<AppLockState>>>();
                              let mut lock_state = state.lock().unwrap();
                              lock_state.is_locked = !lock_state.is_locked;
                              let new_locked = lock_state.is_locked;
+                             #[cfg(feature = "overlay-diagnostics")]
+                             if !new_locked { lock_state.last_unlock = Some(("tray", now_ms())); }
 
                              // Emit event to frontend to update UI
                              let _ = app.emit("lock-state-update", new_locked);
@@ -949,10 +1118,7 @@ pub fn run() {
                 // Delay slightly to ensure main window is ready
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_millis(500));
-                    let app_handle_main = app_handle_settings.clone();
-                    let _ = app_handle_settings.run_on_main_thread(move || {
-                        let _ = show_or_create_settings_window(&app_handle_main);
-                    });
+                    request_settings_window(&app_handle_settings);
                 });
             }
 
@@ -976,10 +1142,15 @@ pub fn run() {
                     let mut last_unlock_progress = 0.0;
 
                     loop {
-                        let locked = loop_lock_state.lock().map(|s| s.is_locked).unwrap_or(true);
-                        std::thread::sleep(poll_interval(locked, was_hovering));
+                        let (locked, has_controls) = loop_lock_state.lock().map(|s| (s.is_locked,
+                            s.playback_bounds.as_ref().is_some_and(|(_, updated)| updated.elapsed() <= Duration::from_secs(3))))
+                            .unwrap_or((true, false));
+                        std::thread::sleep(if locked && has_controls { Duration::from_millis(16) }
+                            else { poll_interval(locked, was_hovering) });
                         let elapsed = last_poll.elapsed();
                         last_poll = Instant::now();
+                        #[cfg(feature = "overlay-diagnostics")]
+                        if let Ok(mut state) = loop_lock_state.lock() { state.last_poll = Some(Instant::now()); }
 
                         // Retain periodic recovery above other topmost windows, but
                         // avoid two native writes every half second and never show a hidden window.
@@ -1016,6 +1187,7 @@ pub fn run() {
                         let mut current_x = 0;
                         let mut current_y = 0;
                         let mut current_window_position = None;
+                        let mut current_control_hovering = false;
 
                         #[cfg(target_os = "windows")]
                         {
@@ -1038,17 +1210,15 @@ pub fn run() {
                                             && rel_y >= 0
                                             && rel_y < win_size.height as i32;
 
+                                        let scale = window.scale_factor().unwrap_or(1.0);
                                         if let Ok(mut state) = loop_lock_state.lock() {
-                                            if state.is_locked {
-                                                if state.is_interactive {
-                                                    let _ = window.set_ignore_cursor_events(true);
-                                                    refresh_windows_overlay_transparency(&window);
-                                                    state.is_interactive = false;
-                                                }
-                                            } else if !state.is_interactive {
-                                                let _ = window.set_ignore_cursor_events(false);
+                                            current_control_hovering = controls_under_pointer(&state, rel_x, rel_y,
+                                                scale);
+                                            let interactive = !state.is_locked || current_control_hovering;
+                                            if state.is_interactive != interactive {
+                                                let _ = window.set_ignore_cursor_events(!interactive);
                                                 refresh_windows_overlay_transparency(&window);
-                                                state.is_interactive = true;
+                                                state.is_interactive = interactive;
                                             }
                                         }
                                     }
@@ -1064,15 +1234,15 @@ pub fn run() {
                                 current_hovering = snapshot.current_hovering;
                                 current_window_position = Some((snapshot.window_x, snapshot.window_y));
 
+                                let scale = loop_app_handle.get_webview_window("main")
+                                    .and_then(|window| window.scale_factor().ok()).unwrap_or(1.0);
                                 if let Ok(mut state) = loop_lock_state.lock() {
-                                    if state.is_locked {
-                                        if state.is_interactive {
-                                            let _ = macos_set_ignore_cursor_events(&loop_app_handle, true);
-                                            state.is_interactive = false;
-                                        }
-                                    } else if !state.is_interactive {
-                                        let _ = macos_set_ignore_cursor_events(&loop_app_handle, false);
-                                        state.is_interactive = true;
+                                    current_control_hovering = controls_under_pointer(&state, current_x - snapshot.window_x,
+                                        current_y - snapshot.window_y, scale);
+                                    let interactive = !state.is_locked || current_control_hovering;
+                                    if state.is_interactive != interactive {
+                                        let _ = macos_set_ignore_cursor_events(&loop_app_handle, !interactive);
+                                        state.is_interactive = interactive;
                                     }
                                 }
                             }
@@ -1103,7 +1273,7 @@ pub fn run() {
                             })
                             .unwrap_or((true, 1.2, 3.0, true));
 
-                        if current_hovering && is_locked && hover_unlock_enabled {
+                        if current_hovering && !current_control_hovering && is_locked && hover_unlock_enabled {
                             let dist_sq =
                                 (current_x - last_mouse_x).pow(2) + (current_y - last_mouse_y).pow(2);
 
@@ -1120,6 +1290,8 @@ pub fn run() {
 
                             if hover_idle.seconds() >= wait_time + hold_time {
                                 if let Ok(mut state) = loop_lock_state.lock() {
+                                    #[cfg(feature = "overlay-diagnostics")]
+                                    { state.last_unlock = Some(("hover", now_ms())); }
                                     state.is_locked = false;
                                     let _ = loop_app_handle.emit("lock-state-update", false);
                                     hover_idle.reset();
@@ -1142,8 +1314,9 @@ pub fn run() {
 
                         if let Some((current_win_x, current_win_y)) = current_window_position {
                             if !is_locked_now && enable_auto_lock {
-                                auto_lock_idle.observe(
+                                auto_lock_idle.observe_auto_lock(
                                     current_win_x == last_window_x && current_win_y == last_window_y,
+                                    current_hovering,
                                     elapsed,
                                 );
                                 if auto_lock_idle.seconds() >= auto_lock_delay {
@@ -1169,8 +1342,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             start_drag,
+            move_overlay_window,
             open_settings_window,
             set_ignore_cursor_events,
+            set_playback_control_bounds,
+            #[cfg(feature = "overlay-diagnostics")]
+            get_overlay_interaction_state,
             set_lock_state,
             set_unlock_timing,
             set_hover_unlock_enabled,
@@ -1178,6 +1355,7 @@ pub fn run() {
             set_auto_lock_delay,
             get_system_fonts,
             get_latest_payloads,
+            get_playback_control_config,
             get_server_port,
             set_server_port,
             restart_app,
