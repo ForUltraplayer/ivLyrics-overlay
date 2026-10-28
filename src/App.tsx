@@ -217,7 +217,7 @@ const strings = {
     downloading: "다운로드 중...",
     // GitHub fallback
     githubFallback: "GitHub에서 다운로드",
-    githubFallbackDesc: "자동 업데이트에 실패했습니다. 수동으로 다운로드해주세요.",
+    githubFallbackDesc: "「직접 다운로드」로 설치 파일을 받아 실행하면 업데이트됩니다.",
     downloadPage: "다운로드 페이지 열기",
     directDownload: "직접 다운로드",
 
@@ -357,7 +357,7 @@ const strings = {
     downloading: "Downloading...",
     // GitHub fallback
     githubFallback: "Download from GitHub",
-    githubFallbackDesc: "Auto-update failed. Please download manually.",
+    githubFallbackDesc: "Download the installer with Direct Download and run it to update.",
     downloadPage: "Open Download Page",
     directDownload: "Direct Download",
 
@@ -865,6 +865,10 @@ function App() {
     const isMac = platform.includes("mac");
     const isWindows = platform.includes("win");
 
+    // The installer replaces the installed copy; a bare .exe would only run from the Downloads folder.
+    const installer = isWindows && assets.find(asset => asset.name.toLowerCase().endsWith("-setup.exe"));
+    if (installer) return installer;
+
     for (const asset of assets) {
       const name = asset.name.toLowerCase();
       if (isWindows && (name.endsWith(".exe") || name.includes("windows") && name.endsWith(".zip"))) {
@@ -1089,7 +1093,7 @@ function App() {
                     {githubDownloadUrl && (
                       <button
                         className="update-btn primary"
-                        onClick={() => openUrl(githubDownloadUrl)}
+                        onClick={() => { void openUrl(githubDownloadUrl); setUpdateModalOpen(false); }}
                       >
                         {t.directDownload}
                       </button>

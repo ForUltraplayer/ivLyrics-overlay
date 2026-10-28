@@ -1,6 +1,6 @@
 [package]
 name = "lyrics-plus-overlay"
-version = "1.2.11-hangul.3"
+version = "1.2.11-hangul.4"
 description = "Lyrics Plus Overlay - Display lyrics from Spotify"
 authors = ["ivLis"]
 edition = "2021"
