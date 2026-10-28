@@ -199,13 +199,14 @@ test('actual desktop controls render paired actions and route pause without drag
     setGlobal('window', { setInterval: (fn: () => void) => { timers.set(++nextTimer, fn); return nextTimer; },
       clearInterval: (id: number) => timers.delete(id), setTimeout: (fn: () => void) => { timers.set(++nextTimer, fn); return nextTimer; },
       clearTimeout: (id: number) => timers.delete(id), addEventListener() {}, removeEventListener() {} });
-    const commands: unknown[] = []; let stateRequests = 0; let holdState = false;
+    const commands: unknown[] = []; let stateRequests = 0; let holdState = false; let staleStates = 0;
     setGlobal('fetch', async (url: string, options?: RequestInit) => {
       if (url.endsWith('/playback-command')) commands.push(JSON.parse(String(options?.body)));
       else {
         stateRequests++;
         if (holdState) await new Promise<void>((_resolve, reject) => options?.signal?.addEventListener('abort', () => reject(Error('aborted')), { once: true }));
       }
+      if (!url.endsWith('/playback-command') && staleStates > 0) { staleStates--; return { ok: true, json: async () => ({ state: null }) }; }
       return { ok: true, json: async () => ({ state: { trackUri: 'youtube:video:_-uHa5KiR90', isPlaying: true } }) };
     });
     const Component = (await import(pathToFileURL(output).href)).default;
@@ -233,6 +234,16 @@ test('actual desktop controls render paired actions and route pause without drag
     } finally { Date.now = realNow; }
     await act(async () => { workerTick({ data: 'tick' }); });
     assert.ok(renderer!.root.findAllByType('button').every(button => button.props.disabled === false));
+    // One or two missed polls (a track change) keep the controls; a third in a row shows the waiting label.
+    const enabledNow = () => renderer!.root.findAllByType('button').every(button => button.props.disabled === false);
+    const waiting = () => renderer!.root.findAll(node => node.props.role === 'status').length > 0;
+    staleStates = 3;
+    for (const expected of [true, true, false]) {
+      await act(async () => { workerTick({ data: 'tick' }); });
+      assert.equal(enabledNow(), expected); assert.equal(waiting(), !expected);
+    }
+    await act(async () => { workerTick({ data: 'tick' }); });
+    assert.ok(enabledNow() && !waiting(), 'the next good poll restores the controls');
     const showControls = async (opacity: number) => {
       await act(async () => { renderer!.update(React.createElement(Component, { enabled: true, opacity,
         background: 'rgba(12, 34, 56, 0.4)', color: '#abcdef', isPlaying: false, trackUri: 'native', language: 'ko' })); });

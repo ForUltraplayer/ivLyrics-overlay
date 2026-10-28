@@ -19,8 +19,8 @@ interface GitHubRelease {
   html_url: string;
 }
 
-// Repository info
-const GITHUB_OWNER = "ivLis-Studio";
+// Repository info. This fork checks its own releases so an upstream update never replaces its playback controls.
+const GITHUB_OWNER = "ForUltraplayer";
 const GITHUB_REPO = "ivLyrics-overlay";
 const CURRENT_VERSION = __APP_VERSION__;
 import "./App.css";

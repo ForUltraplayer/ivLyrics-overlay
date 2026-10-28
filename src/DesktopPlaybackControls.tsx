@@ -113,7 +113,10 @@ export default function DesktopPlaybackControls({ enabled, visible = true, size 
 
   useEffect(() => {
     if (!enabled || !validConfig(config)) return;
-    let alive = true, busy = false;
+    // A track change or helper restart can miss a poll or two; only a sustained
+    // loss (three polls, about 1.5 s) shows the waiting label, so it no longer flickers.
+    let alive = true, busy = false, misses = 0;
+    const miss = () => { misses += 1; if (misses >= 3) setLive(null); };
     const controller = new AbortController();
     const poll = async () => {
       if (busy || !validConfig(config)) return;
@@ -126,8 +129,8 @@ export default function DesktopPlaybackControls({ enabled, visible = true, size 
           headers: { 'X-Hangul-Overlay-Token': config.token }, signal: attempt.signal,
         });
         const next = response.ok ? parsePlaybackState(await response.json()) : null;
-        if (alive) setLive(next);
-      } catch { if (alive) setLive(null); }
+        if (alive) { if (next) { misses = 0; setLive(next); } else miss(); }
+      } catch { if (alive) miss(); }
       finally { window.clearTimeout(timeout); controller.signal.removeEventListener('abort', cancel); busy = false; }
     };
     void poll(); clockTasks.current.state = poll;
