@@ -1,5 +1,4 @@
 // @file lyricViewport.test.tsx
-// @author: ForUltraplayer
 // @brief Check current-phonetic scrolling for deliberately short lyric windows without moving the transport.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

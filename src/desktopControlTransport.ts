@@ -1,5 +1,4 @@
 // @file desktopControlTransport.ts
-// @author: ForUltraplayer
 // @brief Validate short-lived loopback pairing and send explicit desktop playback actions without persistent tokens.
 export interface PlaybackControlConfig {
   bridgeUrl: string;

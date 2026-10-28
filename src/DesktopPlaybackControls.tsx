@@ -1,5 +1,4 @@
 // @file DesktopPlaybackControls.tsx
-// @author: ForUltraplayer
 // @brief Provide authenticated playback controls in the actual desktop lyric window while preserving click-through locking.
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { invoke } from '@tauri-apps/api/core';

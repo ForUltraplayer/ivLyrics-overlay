@@ -1,5 +1,4 @@
 // @file desktopControls.test.tsx
-// @author: ForUltraplayer
 // @brief Verify desktop pairing validation, explicit command transport and real control component wiring.
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';

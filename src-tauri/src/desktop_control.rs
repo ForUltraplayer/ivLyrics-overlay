@@ -1,5 +1,4 @@
 // @file desktop_control.rs
-// @author: ForUltraplayer
 // @brief Validate an in-memory playback pairing from Spotify to its fixed loopback helper.
 use serde::{Deserialize, Serialize};
 

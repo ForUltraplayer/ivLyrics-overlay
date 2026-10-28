@@ -1,5 +1,4 @@
 // @file window_position.rs
-// @author: ForUltraplayer
 // @brief Move the existing lyric window by logical pixels within its current monitor work area.
 
 #[derive(Clone, Copy)]

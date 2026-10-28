@@ -1,5 +1,4 @@
 // @file lyricViewport.ts
-// @author: ForUltraplayer
 // @brief Keep current phonetics inside the lyric viewport while transport controls retain separate space.
 export function revealCurrentLyric(viewport: HTMLElement): void {
   const current = viewport.querySelector<HTMLElement>('[data-current-lyric="true"]');
