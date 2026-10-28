@@ -188,6 +188,19 @@ test("production App playback, bootstrap and supplement regressions", async (t) 
       for (let ancestor = controls()[0].parent; ancestor; ancestor = ancestor.parent) {
         assert.ok(!String(ancestor.props.className).split(' ').includes('overlay-container'), "controls are independent of the fading lyric container");
       }
+      const slotAlign = () => renderer!.root.findByProps({ className: 'desktop-controls-slot' }).props['data-align'];
+      assert.equal(slotAlign(), 'center', 'settings saved before the horizontal option keep the centered row');
+      for (const [extra, expected] of [
+        [{ textAlign: 'left' }, 'center'],
+        [{ textAlign: 'left', playbackControlsAlign: 'follow' }, 'left'],
+        [{ textAlign: 'right', playbackControlsAlign: 'follow' }, 'right'],
+        [{ textAlign: 'left', playbackControlsAlign: 'right' }, 'right'],
+        [{ textAlign: 'right', playbackControlsAlign: 'left' }, 'left'],
+        [{ textAlign: 'right', playbackControlsAlign: 'bogus' }, 'center'],
+      ] as const) {
+        await updateSettings({ hideWhenPaused: true, isLocked: true, ...extra });
+        assert.equal(slotAlign(), expected, JSON.stringify(extra));
+      }
       await updateSettings({ hideWhenPaused: true, isLocked: true, playbackControlsVisibility: 'hover', playbackControlsSize: 48 });
       assert.equal(controls().length, 0);
       assert.equal(renderer!.root.findAllByProps({ className: 'desktop-controls-slot' }).length, 1, 'hover mode keeps its layout reservation while the buttons are hidden');

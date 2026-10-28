@@ -121,6 +121,8 @@ const defaultSettings = {
   playbackControlsVisibility: "always" as "always" | "hover" | "hidden",
   playbackControlsSize: 32,
   playbackControlsGap: 12,
+  // "follow" uses the lyric textAlign; "center" keeps the original placement for existing users.
+  playbackControlsAlign: "center" as "follow" | "left" | "center" | "right",
   hoverAppearance: "translucent" as "transparent" | "translucent" | "unchanged",
   showNextTrack: true,
   nextTrackSeconds: 15,
@@ -1135,6 +1137,11 @@ function App() {
       : settings.textAlign === "right"
         ? "align-right"
         : "align-center";
+  // Saved values are not validated on load, so anything unknown falls back to the original centered row.
+  const requestedControlsAlign =
+    settings.playbackControlsAlign === "follow" ? settings.textAlign : settings.playbackControlsAlign;
+  const controlsAlign =
+    requestedControlsAlign === "left" || requestedControlsAlign === "right" ? requestedControlsAlign : "center";
 
   // Determine if we should show next track info instead of current track
   const showNextTrackInfo =
@@ -1631,6 +1638,7 @@ function App() {
       )}
     </div>
     {settings.playbackControlsVisibility !== 'hidden' && <div className="desktop-controls-slot"
+      data-align={controlsAlign}
       style={{ '--playback-button-size': `${settings.playbackControlsSize}px`,
         '--playback-controls-gap': `${Math.min(48, Math.max(0, Number(settings.playbackControlsGap) || 0))}px` } as React.CSSProperties}>
     <DesktopPlaybackControls enabled={true}

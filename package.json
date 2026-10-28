@@ -1,7 +1,7 @@
 {
   "name": "lyrics-plus-overlay",
   "private": true,
-  "version": "1.2.11-hangul.2",
+  "version": "1.2.11-hangul.3",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",

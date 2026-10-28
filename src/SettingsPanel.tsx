@@ -107,6 +107,9 @@ const strings = {
         playbackPositionSection: "재생 버튼",
         controlsGap: "세로 위치",
         controlsGapDesc: "값을 늘리면 버튼이 가사 아래로 내려갑니다. 슬라이더 위의 마우스 휠로도 조절할 수 있습니다.",
+        controlsAlign: "가로 위치",
+        controlsAlignDesc: "가사 정렬 따르기를 고르면 텍스트 정렬을 바꿀 때 버튼도 함께 움직입니다.",
+        controlsAlignFollow: "가사 정렬 따르기",
         alignmentSection: "정렬",
         textAlign: "텍스트 정렬",
         alignLeft: "왼쪽",
@@ -354,6 +357,9 @@ const strings = {
         playbackPositionSection: "Playback Controls",
         controlsGap: "Vertical Position",
         controlsGapDesc: "Increase to move the controls farther below the lyrics. You can also use the mouse wheel over this slider.",
+        controlsAlign: "Horizontal Position",
+        controlsAlignDesc: "Follow lyrics moves the controls with the text alignment.",
+        controlsAlignFollow: "Follow lyrics",
         alignmentSection: "Alignment",
         textAlign: "Text Alignment",
         alignLeft: "Left",
@@ -1413,6 +1419,15 @@ export default function SettingsPanel({
                             <SettingSection title={t.playbackPositionSection} delay={0}>
                                 <SettingItem label={t.controlsGap} description={t.controlsGapDesc} column>
                                     <Slider value={settings.playbackControlsGap} onChange={(v) => update("playbackControlsGap", v)} min={0} max={48} step={2} suffix="px" wheelAdjust />
+                                </SettingItem>
+                                <SettingItem label={t.controlsAlign} description={t.controlsAlignDesc} column>
+                                    <SegmentedControl options={[
+                                        { value: "follow", label: t.controlsAlignFollow },
+                                        { value: "left", label: t.alignLeft },
+                                        { value: "center", label: t.alignCenter },
+                                        { value: "right", label: t.alignRight },
+                                    ]} value={settings.playbackControlsAlign}
+                                        onChange={(v) => update("playbackControlsAlign", v)} />
                                 </SettingItem>
                             </SettingSection>
                             <SettingSection title={t.alignmentSection} delay={0}>

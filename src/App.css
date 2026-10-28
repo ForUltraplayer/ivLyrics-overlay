@@ -147,6 +147,18 @@ body {
   min-height: calc(var(--playback-button-size, 32px) + 14px + var(--playback-controls-gap, 12px) + 8px);
   padding: var(--playback-controls-gap, 12px) 0 8px;
 }
+/* Left/right controls share the lyric inset so they line up with left/right aligned lyrics. */
+.desktop-controls-slot[data-align="left"],
+.desktop-controls-slot[data-align="right"] {
+  padding-left: var(--spacing-md);
+  padding-right: var(--spacing-md);
+}
+.desktop-controls-slot[data-align="left"] {
+  justify-content: flex-start;
+}
+.desktop-controls-slot[data-align="right"] {
+  justify-content: flex-end;
+}
 .overlay-container {
   width: 100%;
   height: 100vh;

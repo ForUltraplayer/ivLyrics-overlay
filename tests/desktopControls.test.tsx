@@ -82,6 +82,14 @@ test('real settings panel exposes controls and window position without replacing
     assert.ok(renderer!.root.findAllByProps({ className: 'section-title' }).some(node => text(node) === '재생 버튼'));
     const gapSlider = renderer!.root.findAllByType('input').find(input => input.props.type === 'range' && input.props.min === 0 && input.props.max === 48)!;
     assert.ok(gapSlider);
+    assert.equal(settings.playbackControlsAlign, 'center', 'the horizontal position defaults to the original centered row');
+    for (const [label, expected] of [['가사 정렬 따르기', 'follow'], ['왼쪽', 'left'], ['오른쪽', 'right'], ['가운데', 'center']]) {
+      const option = buttons().find(button => text(button) === label && button.props['aria-pressed'] !== undefined)!;
+      assert.ok(option, `layout exposes the ${label} horizontal option`);
+      await act(async () => { option.props.onClick(); });
+      assert.equal(settings.playbackControlsAlign, expected);
+    }
+    assert.equal(settings.textAlign, 'center', 'moving the controls leaves lyric alignment unchanged');
     await act(async () => gapSlider.props.onChange({ target: { value: '28' } }));
     assert.equal(settings.playbackControlsGap, 28);
     assert.equal(wheelListeners.size, 1);
